@@ -4,7 +4,7 @@ import asyncio
 import functools
 import math
 from dataclasses import dataclass
-from typing import Collection, Self
+from typing import Collection, Literal, Self
 
 import attrs
 import distrax
@@ -305,6 +305,24 @@ class AngularVelocityTrackingReward(ksim.Reward):
         command_norm = jnp.linalg.norm(command, axis=-1)
         reward_value *= command_norm > self.stand_still_threshold
 
+        return reward_value
+
+
+@attrs.define(frozen=True, kw_only=True)
+class TargetHeightReward(ksim.Reward):
+    """Reward for reaching a target height."""
+
+    target_height: float = attrs.field(default=1.0)
+    norm: xax.NormType = attrs.field(default="l1")
+    temp: float = attrs.field(default=1.0)
+    monotonic_fn: Literal["exp", "inv"] = attrs.field(default="inv")
+
+    def get_reward(self, trajectory: ksim.Trajectory) -> Array:
+        qpos = trajectory.qpos
+        error = qpos[..., 2] - self.target_height
+        reward_value = ksim.norm_to_reward(
+            xax.get_norm(error, self.norm), temp=self.temp, monotonic_fn=self.monotonic_fn
+        )
         return reward_value
 
 
@@ -878,6 +896,7 @@ class HumanoidWalkingTask(ksim.PPOTask[HumanoidWalkingTaskConfig]):
             ksim.AngularVelocityPenalty(index=("x", "y"), scale=-0.005, scale_by_curriculum=True),
             ksim.LinearVelocityPenalty(index=("z",), scale=-0.005, scale_by_curriculum=True),
             # Bespoke rewards.
+            TargetHeightReward(target_height=1.0, scale=0.5),
             BentArmPenalty.create_penalty(physics_model, scale=-0.1),
             StraightLegPenalty.create_penalty(physics_model, scale=-0.2),
             FeetPhaseReward(scale=2.1, max_foot_height=0.18, stand_still_threshold=self.config.stand_still_threshold),
